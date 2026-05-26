@@ -19,11 +19,27 @@ limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Run database migrations on startup
+    from alembic.config import Config
+    from alembic import command
+    alembic_cfg = Config("alembic.ini")
+    command.upgrade(alembic_cfg, "head")
+
+    # Seed exercises if empty
+    from app.core.database import SessionLocal
+    from app.models.exercise import Exercise
+    db = SessionLocal()
+    try:
+        if db.query(Exercise).count() == 0:
+            from scripts.seed_exercises import seed
+            seed()
+    finally:
+        db.close()
+
     scheduler_module.start_scheduler()
     yield
     scheduler_module.stop_scheduler()
     await close_mongo()
-
 
 app = FastAPI(
     title="Workout Tracker API",
