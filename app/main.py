@@ -9,23 +9,20 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from app.core import scheduler as scheduler_module
 from app.core.mongodb import close_mongo
-import app.models  # register all ORM models
+import app.models
 
 from app.routers import auth, exercises, workouts, dashboard, comments, reports
 
-# Rate limiter — keyed by client IP
 limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Run database migrations on startup
     from alembic.config import Config
     from alembic import command
     alembic_cfg = Config("alembic.ini")
     command.upgrade(alembic_cfg, "head")
 
-    # Seed exercises if empty
     from app.core.database import SessionLocal
     from app.models.exercise import Exercise
     db = SessionLocal()
@@ -41,6 +38,7 @@ async def lifespan(app: FastAPI):
     scheduler_module.stop_scheduler()
     await close_mongo()
 
+
 app = FastAPI(
     title="Workout Tracker API",
     description=(
@@ -55,12 +53,10 @@ app = FastAPI(
     openapi_url="/openapi.json",
 )
 
-# Rate limiting middleware
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 
-# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -85,7 +81,7 @@ app.include_router(dashboard.router, prefix=API_PREFIX)
 
 @app.get("/", tags=["Health"])
 def root():
-    return {"status": "ok", "message": "Workout Tracker API v2 — Phase 2 Complete"}
+    return {"status": "ok", "message": "Workout Tracker API v2 — All Phases Complete"}
 
 
 @app.get("/health", tags=["Health"])

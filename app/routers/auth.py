@@ -2,6 +2,8 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 from jose import jwt
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from app.core.database import get_db
 from app.core.security import get_current_user, create_access_token
@@ -12,17 +14,17 @@ from app.services.auth_service import create_user, authenticate_user, get_token_
 from app.core.mongodb import logs_collection
 
 settings = get_settings()
-
+limiter = Limiter(key_func=get_remote_address)
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
+@limiter.limit("3/minute")
 @router.post("/register", response_model=dict, status_code=201, summary="Register a new user")
-async def register(user_data: UserCreate, request: Request, db: Session = Depends(get_db)):
-    """Register a new user account."""
+async def register(request: Request, user_data: UserCreate, db: Session = Depends(get_db)):
+    """Register a new user account. Rate limited to 3 requests per minute per IP."""
     user = create_user(db, user_data)
     token = get_token_for_user(user)
 
-    # Log to MongoDB
     col = logs_collection()
     if col is not None:
         await col.insert_one({
@@ -41,13 +43,13 @@ async def register(user_data: UserCreate, request: Request, db: Session = Depend
     }
 
 
+@limiter.limit("5/minute")
 @router.post("/login", response_model=Token, summary="Login and get JWT token")
-async def login(credentials: UserLogin, request: Request, db: Session = Depends(get_db)):
-    """Authenticate with email/password and receive a Bearer token."""
+async def login(request: Request, credentials: UserLogin, db: Session = Depends(get_db)):
+    """Authenticate with email/password. Rate limited to 5 requests per minute per IP."""
     user = authenticate_user(db, credentials.email, credentials.password)
     token = get_token_for_user(user)
 
-    # Log to MongoDB
     col = logs_collection()
     if col is not None:
         await col.insert_one({
@@ -67,14 +69,10 @@ async def logout(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """
-    Blacklist the current JWT token in Redis.
-    The token will be rejected on all future requests until it naturally expires.
-    """
+    """Blacklist the current JWT token in Redis."""
     auth_header = request.headers.get("Authorization", "")
     token = auth_header.replace("Bearer ", "").strip()
 
-    # Calculate remaining TTL from the token's exp claim
     ttl = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
     try:
         payload = jwt.decode(
@@ -88,7 +86,6 @@ async def logout(
 
     redis_blacklist(token, ttl)
 
-    # Log to MongoDB
     col = logs_collection()
     if col is not None:
         await col.insert_one({
